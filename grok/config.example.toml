@@ -1,0 +1,12 @@
+# Example .grok/config.toml (project scoped) for using cybermem with Grok
+# Place at repo root as .grok/config.toml
+
+[mcp_servers.cybermem]
+command = "node"
+args = ["scratch/cybermem/mcp/server.js"]   # adjust path or use absolute
+env = { CYBERMEM_HOME = ".grok/cybermem" }
+enabled = true
+startup_timeout_sec = 15
+
+# Optional: also load the bundled cybermem skill if present
+# skills will be discovered from ./grok or user .grok/skills

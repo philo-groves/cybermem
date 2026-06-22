@@ -161,3 +161,37 @@ See [docs/architecture.md](docs/architecture.md) and [docs/integration.md](docs/
 ```
 First, create a full ledger at method_ledger.json (base of this workspace) of all public Java methods within <project>. Each ledger item contains the class, function, and state: untouched, partial, completed. After ledger creation, systematically walk over each function for vulnerabilities, frequently building and using the knowledge base via cybermem. For each function, use existing knowledge to spawn at least two subagents to act as isolated advanced bug class specialists. Use opengrep for code pattern matching across the large source code. Goal completion: identify and proof a vulnerability that is end-to-end reachable by an attacker with an elevation of priveleges or remote security impact. Other findings may be proofed, but will not complete the goal.
 ```
+
+## Grok
+
+`cybermem` works with Grok via its stdio MCP server (no Pi required).
+
+### Setup with Grok
+```sh
+# One-time (or per project)
+grok mcp add cybermem -- node ./mcp/server.js
+```
+
+Or commit a project-scoped config:
+
+```toml
+# .grok/config.toml
+[mcp_servers.cybermem]
+command = "node"
+args = ["path/to/cybermem/mcp/server.js"]
+env = { CYBERMEM_HOME = ".grok/cybermem" }
+enabled = true
+```
+
+MCP tools are namespaced: `cybermem__recall`, `cybermem__finding_upsert`, etc.
+
+Use `search_tool` + `use_tool` or load the Grok skill at `grok/SKILL.md` (copied into your `.grok/skills/cybermem/`).
+
+Recommended storage for Grok workspaces:
+```
+<grok-workspace>/.grok/cybermem/cybermem.sqlite3
+```
+
+The same tiered memory, buffers, finding ledger, and production rules are available. See `grok/SKILL.md` and the main Cyber Workflow section above.
+
+The MCP server is the portable integration point for Grok, Claude, Cursor, and other MCP clients.
