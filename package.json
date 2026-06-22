@@ -1,0 +1,53 @@
+{
+  "name": "cybermem",
+  "version": "0.1.0",
+  "description": "Pi package for ACT-R-inspired cyber research memory orchestration.",
+  "type": "module",
+  "license": "MIT",
+  "bin": {
+    "cybermem-mcp": "./mcp/server.js"
+  },
+  "keywords": [
+    "pi-package",
+    "pi",
+    "pi-coding-agent",
+    "cybersecurity",
+    "memory",
+    "mcp",
+    "act-r",
+    "subagents"
+  ],
+  "pi": {
+    "extensions": [
+      "./extensions/index.js"
+    ],
+    "skills": [
+      "./skills"
+    ],
+    "prompts": [
+      "./prompts"
+    ]
+  },
+  "files": [
+    "extensions/",
+    "mcp/",
+    "skills/",
+    "prompts/",
+    "docs/",
+    "README.md",
+    "CHANGELOG.md",
+    "LICENSE",
+    "package.json"
+  ],
+  "scripts": {
+    "test": "node --test --test-concurrency=1 tests/*.test.mjs",
+    "check": "npm test",
+    "pack:dry": "npm pack --dry-run"
+  },
+  "peerDependencies": {
+    "@earendil-works/pi-ai": "*",
+    "@earendil-works/pi-coding-agent": "*",
+    "typebox": "*"
+  },
+  "devDependencies": {}
+}

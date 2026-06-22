@@ -1,0 +1,5 @@
+node_modules/
+.pi/cybermem/
+npm-debug.log*
+coverage/
+*.tgz
