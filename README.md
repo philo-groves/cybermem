@@ -91,6 +91,24 @@ The plugin exposes a small MCP API:
 - `cybermem_export`: Export a portable JSON preseed.
 - `cybermem_import`: Merge a JSON preseed into the current workspace.
 
+## Viewer
+
+The MCP server also hosts a local read-only viewer for researchers. It is not exposed as a memory tool and is not part of the cyber agent workflow.
+
+By default, the viewer starts with the MCP server at:
+
+```txt
+http://127.0.0.1:8765/
+```
+
+If the port is busy, Cybermem tries the next available port. The active viewer URL is written to:
+
+```txt
+~/.cybermem/viewer.json
+```
+
+The viewer tracks recently used workspaces from normal memory tool calls and reads SQLite directly when rendered. It polls only while the browser page is open and visible.
+
 ## Local Install
 
 This repository is a Codex plugin root. The plugin manifest lives at:

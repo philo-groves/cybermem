@@ -146,6 +146,30 @@ class CybermemServerTests(unittest.TestCase):
         self.assertEqual(results["count"], 1)
         self.assertEqual(results["nodes"][0]["typeData"]["cve"], "CVE-2026-0001")
 
+    def test_viewer_snapshot_reads_memory_without_viewer_tool(self):
+        cybermem.save_node(
+            self.conn,
+            {
+                "type": "bug",
+                "title": "Patch comment mentions bounds bug",
+                "summary": "Security-relevant code comment noted a historical bounds bug.",
+                "status": "confirmed",
+            },
+        )
+
+        snapshot = cybermem.viewer_snapshot(
+            self.workspace,
+            query="bounds",
+            types=["bug"],
+            limit=20,
+        )
+        tool_names = {tool["name"] for tool in cybermem.tool_schema()}
+
+        self.assertTrue(snapshot["dbExists"])
+        self.assertEqual(snapshot["counts"]["bug"], 1)
+        self.assertEqual(snapshot["nodes"][0]["type"], "bug")
+        self.assertNotIn("cybermem_viewer", tool_names)
+
     def test_rejects_absolute_artifact_paths(self):
         with self.assertRaises(ValueError):
             cybermem.save_node(

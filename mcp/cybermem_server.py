@@ -13,10 +13,13 @@ import os
 import re
 import sqlite3
 import sys
+import threading
 from datetime import datetime, timezone
 from hashlib import sha1
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any
+from urllib.parse import parse_qs, urlparse
 
 
 SERVER_NAME = "cybermem"
@@ -38,6 +41,14 @@ NODE_TYPES = {
 STATUSES = {"draft", "suspected", "confirmed", "rejected", "stale"}
 EVIDENCE_KINDS = {"code", "artifact", "command", "url", "human-note"}
 PATH_BASES = {"workspace", "repo", "asset-root", "external"}
+
+PLUGIN_ROOT = Path(__file__).resolve().parents[1]
+VIEWER_DIR = PLUGIN_ROOT / "viewer"
+VIEWER_HOST = "127.0.0.1"
+VIEWER_DEFAULT_PORT = int(os.environ.get("CYBERMEM_VIEWER_PORT", "8765"))
+VIEWER_SERVER: ThreadingHTTPServer | None = None
+VIEWER_LOCK = threading.Lock()
+VIEWER_STATE_LOCK = threading.Lock()
 
 
 def utc_now() -> str:
@@ -100,6 +111,49 @@ def resolve_db_path(workspace: Path) -> Path:
     return workspace / ".cybermem" / "memory.sqlite"
 
 
+def viewer_state_path() -> Path:
+    override = os.environ.get("CYBERMEM_VIEWER_STATE")
+    if override:
+        return Path(override).expanduser().resolve()
+    return Path.home() / ".cybermem" / "viewer.json"
+
+
+def load_viewer_state() -> dict[str, Any]:
+    path = viewer_state_path()
+    if not path.exists():
+        return {}
+    try:
+        value = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return {}
+    return value if isinstance(value, dict) else {}
+
+
+def save_viewer_state(state: dict[str, Any]) -> None:
+    path = viewer_state_path()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(state, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+
+
+def remember_workspace(workspace: Path) -> None:
+    with VIEWER_STATE_LOCK:
+        state = load_viewer_state()
+        workspaces = state.get("workspaces", [])
+        if not isinstance(workspaces, list):
+            workspaces = []
+        workspace_value = str(workspace)
+        workspaces = [
+            item
+            for item in workspaces
+            if isinstance(item, str) and item != workspace_value
+        ]
+        workspaces.insert(0, workspace_value)
+        state["workspaces"] = workspaces[:12]
+        state["lastWorkspace"] = workspace_value
+        state["updatedAt"] = utc_now()
+        save_viewer_state(state)
+
+
 def connect(workspace: Path) -> sqlite3.Connection:
     db_path = resolve_db_path(workspace)
     db_path.parent.mkdir(parents=True, exist_ok=True)
@@ -108,6 +162,16 @@ def connect(workspace: Path) -> sqlite3.Connection:
     conn.execute("PRAGMA foreign_keys = ON")
     conn.execute("PRAGMA journal_mode = WAL")
     ensure_schema(conn)
+    return conn
+
+
+def connect_readonly_if_exists(workspace: Path) -> sqlite3.Connection | None:
+    db_path = resolve_db_path(workspace)
+    if not db_path.exists():
+        return None
+    conn = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)
+    conn.row_factory = sqlite3.Row
+    conn.execute("PRAGMA foreign_keys = ON")
     return conn
 
 
@@ -834,6 +898,212 @@ def import_preseed(conn: sqlite3.Connection, workspace: Path, args: dict[str, An
     }
 
 
+def viewer_default_workspace() -> Path:
+    state = load_viewer_state()
+    last_workspace = state.get("lastWorkspace")
+    if isinstance(last_workspace, str) and last_workspace.strip():
+        return Path(last_workspace).expanduser().resolve()
+    return resolve_workspace({})
+
+
+def viewer_state_payload() -> dict[str, Any]:
+    state = load_viewer_state()
+    workspace = viewer_default_workspace()
+    workspaces = state.get("workspaces", [])
+    if not isinstance(workspaces, list):
+        workspaces = []
+    clean_workspaces = []
+    for item in workspaces:
+        if isinstance(item, str) and item not in clean_workspaces:
+            clean_workspaces.append(item)
+    if str(workspace) not in clean_workspaces:
+        clean_workspaces.insert(0, str(workspace))
+    return {
+        "viewer": {
+            "host": VIEWER_HOST,
+            "port": state.get("port"),
+            "url": state.get("url"),
+            "startedAt": state.get("startedAt"),
+        },
+        "workspace": str(workspace),
+        "workspaces": clean_workspaces[:12],
+        "nodeTypes": sorted(NODE_TYPES),
+        "statuses": sorted(STATUSES),
+        "generatedAt": utc_now(),
+    }
+
+
+def parse_types_param(raw: str | None) -> list[str]:
+    if not raw:
+        return []
+    return [item.strip() for item in raw.split(",") if item.strip()]
+
+
+def viewer_snapshot(
+    workspace: Path,
+    *,
+    query: str = "",
+    types: list[str] | None = None,
+    limit: int = 80,
+) -> dict[str, Any]:
+    db_path = resolve_db_path(workspace)
+    payload: dict[str, Any] = {
+        "workspace": str(workspace),
+        "database": str(db_path),
+        "dbExists": db_path.exists(),
+        "generatedAt": utc_now(),
+        "counts": {},
+        "statusCounts": {},
+        "edgeCount": 0,
+        "evidenceCount": 0,
+        "latestUpdatedAt": None,
+        "nodes": [],
+    }
+    conn = connect_readonly_if_exists(workspace)
+    if conn is None:
+        return payload
+    try:
+        counts = conn.execute(
+            "SELECT type, COUNT(*) AS count FROM nodes GROUP BY type ORDER BY type"
+        ).fetchall()
+        payload["counts"] = {row["type"]: row["count"] for row in counts}
+        status_counts = conn.execute(
+            "SELECT status, COUNT(*) AS count FROM nodes GROUP BY status ORDER BY status"
+        ).fetchall()
+        payload["statusCounts"] = {row["status"]: row["count"] for row in status_counts}
+        payload["edgeCount"] = conn.execute("SELECT COUNT(*) AS count FROM edges").fetchone()["count"]
+        payload["evidenceCount"] = conn.execute(
+            "SELECT COUNT(*) AS count FROM evidence_refs"
+        ).fetchone()["count"]
+        payload["latestUpdatedAt"] = conn.execute(
+            "SELECT MAX(updated_at) AS latest FROM nodes"
+        ).fetchone()["latest"]
+        results = search_nodes(
+            conn,
+            {
+                "query": query,
+                "types": types or [],
+                "limit": limit,
+                "includeEvidence": True,
+                "includeEdges": True,
+            },
+        )
+        payload["nodes"] = results["nodes"]
+    finally:
+        conn.close()
+    return payload
+
+
+class CybermemViewerHandler(BaseHTTPRequestHandler):
+    server_version = "CybermemViewer/0.1"
+
+    def log_message(self, format: str, *args: Any) -> None:
+        return
+
+    def send_json(self, payload: dict[str, Any], status: int = 200) -> None:
+        body = json.dumps(payload, sort_keys=True).encode("utf-8")
+        self.send_response(status)
+        self.send_header("Content-Type", "application/json; charset=utf-8")
+        self.send_header("Cache-Control", "no-store")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
+    def send_static(self, name: str, content_type: str) -> None:
+        path = VIEWER_DIR / name
+        if not path.exists():
+            self.send_json({"error": f"Missing viewer asset: {name}"}, status=404)
+            return
+        body = path.read_bytes()
+        self.send_response(200)
+        self.send_header("Content-Type", content_type)
+        self.send_header("Cache-Control", "no-cache")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
+    def do_GET(self) -> None:
+        parsed = urlparse(self.path)
+        if parsed.path in {"/", "/index.html"}:
+            self.send_static("index.html", "text/html; charset=utf-8")
+            return
+        if parsed.path == "/styles.css":
+            self.send_static("styles.css", "text/css; charset=utf-8")
+            return
+        if parsed.path == "/app.js":
+            self.send_static("app.js", "text/javascript; charset=utf-8")
+            return
+        if parsed.path == "/api/state":
+            self.send_json(viewer_state_payload())
+            return
+        if parsed.path == "/api/snapshot":
+            params = parse_qs(parsed.query)
+            raw_workspace = params.get("workspace", [None])[0]
+            workspace = (
+                Path(raw_workspace).expanduser().resolve()
+                if raw_workspace
+                else viewer_default_workspace()
+            )
+            query = params.get("query", [""])[0]
+            types = parse_types_param(params.get("types", [""])[0])
+            try:
+                limit = parse_limit(int(params.get("limit", ["80"])[0]), 80)
+            except (TypeError, ValueError):
+                limit = 80
+            try:
+                self.send_json(
+                    viewer_snapshot(workspace, query=query, types=types, limit=limit)
+                )
+            except Exception as exc:
+                self.send_json({"error": str(exc)}, status=500)
+            return
+        self.send_json({"error": "Not found"}, status=404)
+
+
+def start_viewer_once() -> dict[str, Any] | None:
+    global VIEWER_SERVER
+    if os.environ.get("CYBERMEM_VIEWER_DISABLED") == "1":
+        return None
+    with VIEWER_LOCK:
+        if VIEWER_SERVER is not None:
+            state = load_viewer_state()
+            return {
+                "host": VIEWER_HOST,
+                "port": state.get("port"),
+                "url": state.get("url"),
+            }
+        for port in range(VIEWER_DEFAULT_PORT, VIEWER_DEFAULT_PORT + 20):
+            try:
+                server = ThreadingHTTPServer((VIEWER_HOST, port), CybermemViewerHandler)
+                break
+            except OSError:
+                continue
+        else:
+            return None
+
+        VIEWER_SERVER = server
+        thread = threading.Thread(
+            target=server.serve_forever,
+            name="cybermem-viewer",
+            daemon=True,
+        )
+        thread.start()
+        url = f"http://{VIEWER_HOST}:{server.server_port}/"
+        with VIEWER_STATE_LOCK:
+            state = load_viewer_state()
+            state.update(
+                {
+                    "host": VIEWER_HOST,
+                    "port": server.server_port,
+                    "url": url,
+                    "startedAt": utc_now(),
+                    "updatedAt": utc_now(),
+                }
+            )
+            save_viewer_state(state)
+        return {"host": VIEWER_HOST, "port": server.server_port, "url": url}
+
+
 def tool_workspace_result(workspace: Path) -> dict[str, str]:
     return {
         "workspace": str(workspace),
@@ -844,6 +1114,7 @@ def tool_workspace_result(workspace: Path) -> dict[str, str]:
 def call_tool(name: str, arguments: dict[str, Any] | None) -> dict[str, Any]:
     args = arguments or {}
     workspace = resolve_workspace(args)
+    remember_workspace(workspace)
     conn = connect(workspace)
     try:
         if name == "cybermem_search":
@@ -1037,6 +1308,7 @@ def handle_request(message: dict[str, Any]) -> None:
 
 
 def main() -> None:
+    start_viewer_once()
     for raw_line in sys.stdin:
         line = raw_line.strip()
         if not line:

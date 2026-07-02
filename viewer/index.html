@@ -1,0 +1,45 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Cybermem Viewer</title>
+    <link rel="stylesheet" href="/styles.css">
+  </head>
+  <body>
+    <main class="shell">
+      <header class="topbar">
+        <div>
+          <div class="eyebrow">Cybermem</div>
+          <h1>Memory</h1>
+        </div>
+        <div class="live" id="liveStatus">
+          <span class="live-dot"></span>
+          <span id="liveText">starting</span>
+        </div>
+      </header>
+
+      <section class="workspace-band" aria-label="Workspace">
+        <label for="workspaceSelect">Workspace</label>
+        <div class="workspace-controls">
+          <select id="workspaceSelect"></select>
+          <div class="workspace-open">
+            <input id="workspaceInput" type="text" placeholder="Workspace path" autocomplete="off">
+            <button id="workspaceOpen" type="button">Open</button>
+          </div>
+        </div>
+      </section>
+
+      <section class="stats-grid" id="statsGrid" aria-label="Memory stats"></section>
+
+      <section class="toolbar" aria-label="Filters">
+        <input id="searchInput" type="search" placeholder="Search memory" autocomplete="off">
+        <div class="type-strip" id="typeStrip"></div>
+      </section>
+
+      <section class="feed" id="feed" aria-live="polite"></section>
+    </main>
+
+    <script src="/app.js"></script>
+  </body>
+</html>
