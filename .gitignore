@@ -1,0 +1,13 @@
+.cybermem/
+*.sqlite
+*.sqlite-shm
+*.sqlite-wal
+*.db
+*.db-shm
+*.db-wal
+
+__pycache__/
+*.py[cod]
+.pytest_cache/
+
+.DS_Store

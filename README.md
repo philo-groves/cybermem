@@ -90,6 +90,52 @@ The plugin exposes a small MCP API:
 - `cybermem_export`: Export a portable JSON preseed.
 - `cybermem_import`: Merge a JSON preseed into the current workspace.
 
+## Local Install
+
+This repository is a Codex plugin root. The plugin manifest lives at:
+
+```txt
+.codex-plugin/plugin.json
+```
+
+For local development, expose the repository through the personal plugin marketplace by making it available at:
+
+```txt
+~/plugins/cybermem
+```
+
+For example, from this repository:
+
+```bash
+mkdir -p ~/plugins
+ln -s "$(pwd)" ~/plugins/cybermem
+```
+
+Then add a `cybermem` entry to the local marketplace at `~/.agents/plugins/marketplace.json`:
+
+```json
+{
+  "name": "cybermem",
+  "source": {
+    "source": "local",
+    "path": "./plugins/cybermem"
+  },
+  "policy": {
+    "installation": "AVAILABLE",
+    "authentication": "ON_INSTALL"
+  },
+  "category": "Security"
+}
+```
+
+Runtime memory is workspace-local and is created on first use:
+
+```txt
+.cybermem/memory.sqlite
+```
+
+The runtime database, WAL files, and exported preseeds are intentionally ignored by git.
+
 ## Expected Workflow
 
 1. **Identifying Asset(s)**: Every memory record is assigned to at least one asset. The first step is to identify and document relevant assets.

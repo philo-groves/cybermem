@@ -20,7 +20,7 @@
     "shortDescription": "Durable cyber research memory for Codex.",
     "longDescription": "Cybermem stores reusable cyber research system knowledge as a local SQLite-backed graph. It keeps claims, relationships, and lightweight evidence references while leaving artifacts and transcripts on disk.",
     "developerName": "Local developer",
-    "category": "Productivity",
+    "category": "Security",
     "capabilities": [
       "Read",
       "Write"
