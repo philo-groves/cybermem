@@ -1,13 +1,34 @@
+const TYPE_COLORS = {
+  asset: "#6aa7ff",
+  bug: "#ff6b6b",
+  invariant: "#47d18c",
+  mitigation: "#4cc9d8",
+  source: "#f0a84b",
+  sink: "#f0a84b",
+  primitive: "#77869f",
+  chain: "#77869f",
+  trajectory: "#8ca66e"
+};
+
+const GRAPH_TYPE_STYLES = Object.entries(TYPE_COLORS).map(([type, color]) => ({
+  selector: `node[type = "${type}"]`,
+  style: { "background-color": color }
+}));
+
+const GRAPH_LABEL_ZOOM = 2;
+
 const els = {
-  liveStatus: document.getElementById("liveStatus"),
-  liveText: document.getElementById("liveText"),
+  catalogMode: document.getElementById("catalogMode"),
+  graphMode: document.getElementById("graphMode"),
   workspaceSelect: document.getElementById("workspaceSelect"),
-  workspaceInput: document.getElementById("workspaceInput"),
-  workspaceOpen: document.getElementById("workspaceOpen"),
   statsGrid: document.getElementById("statsGrid"),
   searchInput: document.getElementById("searchInput"),
   typeStrip: document.getElementById("typeStrip"),
   feed: document.getElementById("feed"),
+  graphPanel: document.getElementById("graphPanel"),
+  graphCanvas: document.getElementById("graphCanvas"),
+  graphSummary: document.getElementById("graphSummary"),
+  graphDetail: document.getElementById("graphDetail"),
   evidenceModal: document.getElementById("evidenceModal"),
   evidenceTitle: document.getElementById("evidenceTitle"),
   evidenceList: document.getElementById("evidenceList"),
@@ -20,17 +41,19 @@ const app = {
   nodeTypes: [],
   activeType: "all",
   query: "",
+  mode: "catalog",
   seen: new Map(),
   firstRender: true,
   debounce: null,
-  pollTimer: null
+  pollTimer: null,
+  cy: null,
+  graphSignature: "",
+  graphNodesById: new Map(),
+  graphLabelsVisible: false,
+  pendingFocusNodeId: "",
+  focusedNodeId: "",
+  focusClearTimer: null
 };
-
-function setLive(text, mode) {
-  els.liveText.textContent = text;
-  els.liveStatus.classList.toggle("is-ok", mode === "ok");
-  els.liveStatus.classList.toggle("is-error", mode === "error");
-}
 
 function formatType(value) {
   return value.replace(/-/g, " ");
@@ -41,6 +64,16 @@ function formatTime(value) {
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) return value;
   return date.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" });
+}
+
+function shortGraphLabel(value) {
+  const words = String(value || "")
+    .replace(/[(){}\[\],:;]+/g, " ")
+    .split(/\s+/)
+    .filter(Boolean);
+  if (!words.length) return "memory";
+  const label = words.slice(0, 4).join(" ");
+  return label.length > 30 ? `${label.slice(0, 29)}...` : label;
 }
 
 function stat(label, value) {
@@ -56,6 +89,22 @@ function stat(label, value) {
   return node;
 }
 
+function chip(text, className = "meta-chip") {
+  const node = document.createElement("span");
+  node.className = className;
+  node.textContent = text;
+  return node;
+}
+
+function clearCatalogFocus() {
+  app.pendingFocusNodeId = "";
+  app.focusedNodeId = "";
+  if (app.focusClearTimer) {
+    clearTimeout(app.focusClearTimer);
+    app.focusClearTimer = null;
+  }
+}
+
 function renderWorkspaces() {
   els.workspaceSelect.replaceChildren();
   const values = app.workspaces.length ? app.workspaces : [app.workspace];
@@ -66,7 +115,6 @@ function renderWorkspaces() {
     option.selected = workspace === app.workspace;
     els.workspaceSelect.append(option);
   }
-  els.workspaceInput.value = app.workspace || "";
 }
 
 function renderTypeButtons() {
@@ -82,6 +130,8 @@ function renderTypeButtons() {
       app.activeType = type;
       app.seen.clear();
       app.firstRender = true;
+      app.graphSignature = "";
+      clearCatalogFocus();
       renderTypeButtons();
       refresh();
     });
@@ -101,11 +151,19 @@ function renderStats(snapshot) {
   );
 }
 
-function chip(text, className = "meta-chip") {
-  const node = document.createElement("span");
-  node.className = className;
-  node.textContent = text;
-  return node;
+function setMode(mode) {
+  app.mode = mode;
+  els.catalogMode.classList.toggle("is-active", mode === "catalog");
+  els.graphMode.classList.toggle("is-active", mode === "graph");
+  els.feed.hidden = mode !== "catalog";
+  els.graphPanel.hidden = mode !== "graph";
+  if (mode === "graph" && app.cy) {
+    setTimeout(() => {
+      app.cy.resize();
+      app.cy.fit(undefined, 32);
+    }, 0);
+  }
+  refresh();
 }
 
 function evidenceButton(node) {
@@ -143,8 +201,11 @@ function renderEvidence(node, card) {
 function renderNode(node, changed) {
   const card = document.createElement("article");
   card.className = "memory-card";
+  card.dataset.nodeId = node.id;
+  card.tabIndex = -1;
   card.classList.add(`type-border-${node.type}`);
   if (changed) card.classList.add("is-changed");
+  if (app.focusedNodeId === node.id) card.classList.add("is-focused");
 
   const head = document.createElement("div");
   head.className = "card-head";
@@ -197,6 +258,29 @@ function renderNode(node, changed) {
 
   renderEvidence(node, card);
   return card;
+}
+
+function focusPendingNode() {
+  if (!app.pendingFocusNodeId) return;
+  const nodeId = app.pendingFocusNodeId;
+  const card = [...els.feed.querySelectorAll(".memory-card")].find(
+    (item) => item.dataset.nodeId === nodeId
+  );
+  if (!card) return;
+  app.pendingFocusNodeId = "";
+  app.focusedNodeId = nodeId;
+  if (app.focusClearTimer) clearTimeout(app.focusClearTimer);
+  app.focusClearTimer = setTimeout(() => {
+    app.focusedNodeId = "";
+    app.focusClearTimer = null;
+    const focused = [...els.feed.querySelectorAll(".memory-card")].find(
+      (item) => item.dataset.nodeId === nodeId
+    );
+    if (focused) focused.classList.remove("is-focused");
+  }, 2600);
+  card.classList.add("is-focused");
+  card.focus({ preventScroll: true });
+  card.scrollIntoView({ behavior: "smooth", block: "center" });
 }
 
 function detailRow(label, value) {
@@ -289,6 +373,337 @@ function renderFeed(snapshot) {
   app.seen = nextSeen;
   app.firstRender = false;
   els.feed.replaceChildren(...cards);
+  focusPendingNode();
+}
+
+function graphSignature(graph) {
+  const nodePart = (graph.nodes || [])
+    .map((node) => `${node.id}:${node.updatedAt}`)
+    .sort()
+    .join("|");
+  const edgePart = (graph.edges || [])
+    .map((edge) => `${edge.fromId}:${edge.relation}:${edge.toId}:${edge.updatedAt}`)
+    .sort()
+    .join("|");
+  return `${nodePart}::${edgePart}`;
+}
+
+function graphIsDense(graph) {
+  const nodeCount = (graph.nodes || []).length;
+  const edgeCount = (graph.edges || []).length;
+  return nodeCount >= 70 || edgeCount / Math.max(nodeCount, 1) > 1.4;
+}
+
+function denseGraphPositions(graph) {
+  const nodes = graph.nodes || [];
+  const degree = new Map(nodes.map((node) => [node.id, 0]));
+  for (const edge of graph.edges || []) {
+    degree.set(edge.fromId, (degree.get(edge.fromId) || 0) + 1);
+    degree.set(edge.toId, (degree.get(edge.toId) || 0) + 1);
+  }
+
+  const sorted = [...nodes].sort((left, right) => {
+    const degreeDelta = (degree.get(right.id) || 0) - (degree.get(left.id) || 0);
+    if (degreeDelta) return degreeDelta;
+    const typeDelta = left.type.localeCompare(right.type);
+    if (typeDelta) return typeDelta;
+    return left.title.localeCompare(right.title);
+  });
+
+  const positions = new Map();
+  if (!sorted.length) return positions;
+  positions.set(sorted[0].id, { x: 0, y: 0 });
+
+  let index = 1;
+  let ring = 1;
+  const ringGap = 120;
+  while (index < sorted.length) {
+    const capacity = 10 + ring * 10;
+    const radius = ring * ringGap;
+    const angleOffset = ring % 2 ? -Math.PI / 2 : -Math.PI / 2 + Math.PI / capacity;
+    for (let slot = 0; slot < capacity && index < sorted.length; slot += 1) {
+      const angle = angleOffset + (slot / capacity) * Math.PI * 2;
+      positions.set(sorted[index].id, {
+        x: Math.cos(angle) * radius,
+        y: Math.sin(angle) * radius
+      });
+      index += 1;
+    }
+    ring += 1;
+  }
+  return positions;
+}
+
+function graphElements(graph) {
+  app.graphNodesById = new Map((graph.nodes || []).map((node) => [node.id, node]));
+  const densePositions = graphIsDense(graph) ? denseGraphPositions(graph) : new Map();
+  const nodes = (graph.nodes || []).map((node) => {
+    const element = {
+      data: {
+        id: node.id,
+        label: shortGraphLabel(node.title),
+        fullLabel: node.title,
+        type: node.type,
+        status: node.status,
+        confidence: node.confidence,
+        summary: node.summary,
+        updatedAt: node.updatedAt
+      }
+    };
+    const position = densePositions.get(node.id);
+    if (position) element.position = position;
+    return element;
+  });
+  const edges = (graph.edges || []).map((edge, index) => {
+    const source = app.graphNodesById.get(edge.fromId);
+    const target = app.graphNodesById.get(edge.toId);
+    return {
+      data: {
+        id: `edge-${index}-${edge.fromId}-${edge.relation}-${edge.toId}`,
+        source: edge.fromId,
+        target: edge.toId,
+        label: edge.relation,
+        note: edge.note,
+        fromTitle: source ? source.title : edge.fromId,
+        toTitle: target ? target.title : edge.toId,
+        updatedAt: edge.updatedAt
+      }
+    };
+  });
+  return [...nodes, ...edges];
+}
+
+function renderGraphSummary(graph) {
+  const nodes = graph.nodes || [];
+  const edges = graph.edges || [];
+  const typeText = app.activeType === "all" ? "all types" : formatType(app.activeType);
+  const queryText = app.query ? `query ${app.query}` : "no query";
+  els.graphSummary.replaceChildren(
+    chip(`nodes ${nodes.length}`),
+    chip(`relations ${edges.length}`),
+    chip(typeText),
+    chip(queryText)
+  );
+}
+
+function renderGraphDetail(data, group) {
+  els.graphDetail.hidden = false;
+  els.graphDetail.replaceChildren();
+  const badgeRow = document.createElement("div");
+  badgeRow.className = "badge-row";
+
+  if (group === "nodes") {
+    badgeRow.append(chip(formatType(data.type), `badge type-${data.type}`));
+    const title = document.createElement("h2");
+    title.className = "graph-detail-title";
+    title.textContent = data.fullLabel || data.label;
+    const body = document.createElement("p");
+    body.className = "graph-detail-body";
+    body.textContent = data.summary || "";
+    const meta = document.createElement("div");
+    meta.className = "meta-row";
+    meta.append(
+      chip(data.status || "draft"),
+      chip(`${Math.round(Number(data.confidence || 0) * 100)}%`),
+      chip(`updated ${formatTime(data.updatedAt)}`)
+    );
+    els.graphDetail.append(badgeRow, title, body, meta);
+    return;
+  }
+
+  badgeRow.append(chip(data.label, "badge"));
+  const title = document.createElement("h2");
+  title.className = "graph-detail-title";
+  title.textContent = `${data.fromTitle} -> ${data.toTitle}`;
+  const body = document.createElement("p");
+  body.className = "graph-detail-body";
+  body.textContent = data.note || "";
+  const meta = document.createElement("div");
+  meta.className = "meta-row";
+  meta.append(chip(`updated ${formatTime(data.updatedAt)}`));
+  els.graphDetail.append(badgeRow, title, body, meta);
+}
+
+function clearGraph(message) {
+  if (app.cy) {
+    app.cy.destroy();
+    app.cy = null;
+  }
+  app.graphSignature = "";
+  els.graphCanvas.replaceChildren();
+  const empty = document.createElement("div");
+  empty.className = "empty graph-empty";
+  empty.textContent = message;
+  els.graphCanvas.append(empty);
+  els.graphDetail.hidden = true;
+}
+
+function focusCatalogNode(nodeId) {
+  app.pendingFocusNodeId = nodeId;
+  els.graphDetail.hidden = true;
+  setMode("catalog");
+}
+
+function updateGraphLabels() {
+  if (!app.cy) return;
+  const showLabels = app.cy.zoom() >= GRAPH_LABEL_ZOOM;
+  if (showLabels === app.graphLabelsVisible) return;
+  app.graphLabelsVisible = showLabels;
+  if (showLabels) {
+    app.cy.nodes().addClass("show-labels");
+  } else {
+    app.cy.nodes().removeClass("show-labels");
+  }
+}
+
+function graphLayoutOptions(graph) {
+  const nodeCount = (graph.nodes || []).length;
+  const edgeCount = (graph.edges || []).length;
+  if (nodeCount < 3) {
+    return {
+      name: "circle",
+      animate: false,
+      fit: true,
+      padding: 54
+    };
+  }
+  if (nodeCount >= 70 || edgeCount / Math.max(nodeCount, 1) > 1.4) {
+    return {
+      name: "preset",
+      animate: false,
+      fit: true,
+      padding: 46
+    };
+  }
+  return {
+    name: "cose",
+    animate: false,
+    fit: true,
+    padding: 54,
+    componentSpacing: 90,
+    edgeElasticity: () => 0.03,
+    gravity: 0.01,
+    idealEdgeLength: () => 240,
+    nestingFactor: 1.2,
+    nodeOverlap: 40,
+    nodeRepulsion: () => 2000000,
+    numIter: 3200
+  };
+}
+
+function renderGraph(graph) {
+  renderGraphSummary(graph);
+  if (!graph.dbExists) {
+    clearGraph("No Cybermem database for this workspace yet.");
+    return;
+  }
+  if (!graph.nodes || !graph.nodes.length) {
+    clearGraph("No graph nodes.");
+    return;
+  }
+
+  const signature = graphSignature(graph);
+  if (app.cy && signature === app.graphSignature) return;
+  app.graphSignature = signature;
+  app.graphLabelsVisible = false;
+  if (app.cy) app.cy.destroy();
+
+  app.cy = cytoscape({
+    container: els.graphCanvas,
+    elements: graphElements(graph),
+    minZoom: 0.25,
+    maxZoom: 2.4,
+    style: [
+      {
+        selector: "node",
+        style: {
+          "background-color": "#9aa7b5",
+          "border-color": "#0b1017",
+          "border-width": 1.5,
+          "color": "#edf3fa",
+          "font-size": 8,
+          "height": 18,
+          "label": "",
+          "min-zoomed-font-size": 10,
+          "overlay-opacity": 0,
+          "text-background-color": "#0b1017",
+          "text-background-opacity": 0.76,
+          "text-background-padding": 2,
+          "text-margin-y": -6,
+          "text-max-width": 78,
+          "text-wrap": "wrap",
+          "width": 18
+        }
+      },
+      {
+        selector: "node.show-labels",
+        style: {
+          "label": "data(label)"
+        }
+      },
+      ...GRAPH_TYPE_STYLES,
+      {
+        selector: "edge",
+        style: {
+          "curve-style": "bezier",
+          "font-size": 9,
+          "label": "",
+          "line-color": "#526172",
+          "opacity": 0.72,
+          "target-arrow-color": "#526172",
+          "target-arrow-shape": "triangle",
+          "text-background-color": "#0b1017",
+          "text-background-opacity": 0.8,
+          "text-background-padding": 2,
+          "text-rotation": "autorotate",
+          "width": 1.5
+        }
+      },
+      {
+        selector: "node:selected",
+        style: {
+          "border-color": "#edf3fa",
+          "border-width": 3
+        }
+      },
+      {
+        selector: "edge:selected",
+        style: {
+          "label": "data(label)",
+          "line-color": "#6aa7ff",
+          "opacity": 1,
+          "target-arrow-color": "#6aa7ff"
+        }
+      }
+    ]
+  });
+
+  app.cy.on("tap", "node", (event) => focusCatalogNode(event.target.id()));
+  app.cy.on("tap", "edge", (event) => renderGraphDetail(event.target.data(), "edges"));
+  app.cy.on("tap", (event) => {
+    if (event.target === app.cy) els.graphDetail.hidden = true;
+  });
+  app.cy.on("zoom", updateGraphLabels);
+  app.cy.on("mouseover", "node, edge", () => {
+    els.graphCanvas.style.cursor = "pointer";
+  });
+  app.cy.on("mouseout", "node, edge", () => {
+    els.graphCanvas.style.cursor = "";
+  });
+
+  const layout = app.cy.layout(graphLayoutOptions(graph));
+  layout.on("layoutstop", updateGraphLabels);
+  layout.run();
+  updateGraphLabels();
+}
+
+function snapshotParams(limit) {
+  const params = new URLSearchParams();
+  params.set("workspace", app.workspace);
+  params.set("limit", String(limit));
+  if (app.query) params.set("query", app.query);
+  if (app.activeType !== "all") params.set("types", app.activeType);
+  return params;
 }
 
 async function loadState() {
@@ -303,46 +718,48 @@ async function loadState() {
 
 async function refresh() {
   if (document.hidden || !app.workspace) return;
-  const params = new URLSearchParams();
-  params.set("workspace", app.workspace);
-  params.set("limit", "100");
-  if (app.query) params.set("query", app.query);
-  if (app.activeType !== "all") params.set("types", app.activeType);
   try {
-    const response = await fetch(`/api/snapshot?${params.toString()}`, { cache: "no-store" });
-    const snapshot = await response.json();
-    if (!response.ok || snapshot.error) throw new Error(snapshot.error || "snapshot failed");
+    const catalogLimit = app.pendingFocusNodeId ? 250 : 100;
+    const snapshotResponse = await fetch(
+      `/api/snapshot?${snapshotParams(catalogLimit).toString()}`,
+      { cache: "no-store" }
+    );
+    const snapshot = await snapshotResponse.json();
+    if (!snapshotResponse.ok || snapshot.error) throw new Error(snapshot.error || "snapshot failed");
     renderStats(snapshot);
-    renderFeed(snapshot);
-    setLive("live", "ok");
+
+    if (app.mode === "catalog") {
+      renderFeed(snapshot);
+      return;
+    }
+
+    const graphResponse = await fetch(`/api/graph?${snapshotParams(250).toString()}`, { cache: "no-store" });
+    const graph = await graphResponse.json();
+    if (!graphResponse.ok || graph.error) throw new Error(graph.error || "graph failed");
+    renderGraph(graph);
   } catch (error) {
-    setLive("offline", "error");
+    if (app.mode === "catalog") {
+      const empty = document.createElement("div");
+      empty.className = "empty";
+      empty.textContent = "Viewer is offline.";
+      els.feed.replaceChildren(empty);
+    } else {
+      clearGraph("Viewer is offline.");
+    }
   }
 }
 
 function bind() {
+  els.catalogMode.addEventListener("click", () => setMode("catalog"));
+  els.graphMode.addEventListener("click", () => setMode("graph"));
+
   els.workspaceSelect.addEventListener("change", () => {
     app.workspace = els.workspaceSelect.value;
-    els.workspaceInput.value = app.workspace;
     app.seen.clear();
     app.firstRender = true;
+    app.graphSignature = "";
+    clearCatalogFocus();
     refresh();
-  });
-
-  function openWorkspace() {
-    const value = els.workspaceInput.value.trim();
-    if (!value) return;
-    app.workspace = value;
-    app.workspaces = [value, ...app.workspaces.filter((item) => item !== value)];
-    app.seen.clear();
-    app.firstRender = true;
-    renderWorkspaces();
-    refresh();
-  }
-
-  els.workspaceOpen.addEventListener("click", openWorkspace);
-  els.workspaceInput.addEventListener("keydown", (event) => {
-    if (event.key === "Enter") openWorkspace();
   });
 
   els.evidenceClose.addEventListener("click", closeEvidence);
@@ -359,12 +776,21 @@ function bind() {
     app.debounce = setTimeout(() => {
       app.seen.clear();
       app.firstRender = true;
+      app.graphSignature = "";
+      clearCatalogFocus();
       refresh();
     }, 220);
   });
 
   document.addEventListener("visibilitychange", () => {
     if (!document.hidden) refresh();
+  });
+
+  window.addEventListener("resize", () => {
+    if (app.cy && app.mode === "graph") {
+      app.cy.resize();
+      app.cy.fit(undefined, 32);
+    }
   });
 }
 
@@ -375,7 +801,10 @@ async function boot() {
     await refresh();
     app.pollTimer = setInterval(refresh, 1600);
   } catch (error) {
-    setLive("offline", "error");
+    const empty = document.createElement("div");
+    empty.className = "empty";
+    empty.textContent = "Viewer is offline.";
+    els.feed.replaceChildren(empty);
   }
 }
 

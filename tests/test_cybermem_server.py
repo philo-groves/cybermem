@@ -170,6 +170,44 @@ class CybermemServerTests(unittest.TestCase):
         self.assertEqual(snapshot["nodes"][0]["type"], "bug")
         self.assertNotIn("cybermem_viewer", tool_names)
 
+    def test_viewer_graph_returns_memory_relations(self):
+        source = cybermem.save_node(
+            self.conn,
+            {
+                "type": "source",
+                "title": "Comment parser",
+                "summary": "Attacker-controlled parser entrypoint.",
+            },
+        )
+        sink = cybermem.save_node(
+            self.conn,
+            {
+                "type": "sink",
+                "title": "Bounds copy",
+                "summary": "Sensitive bounded copy sink.",
+            },
+        )
+        cybermem.link_nodes(
+            self.conn,
+            {
+                "fromId": source["id"],
+                "toId": sink["id"],
+                "relation": "flows_to",
+            },
+        )
+
+        graph = cybermem.viewer_graph(self.workspace, query="parser", limit=20)
+        full_graph = cybermem.viewer_graph(self.workspace, limit=20)
+
+        self.assertEqual(graph["nodes"][0]["type"], "source")
+        self.assertEqual(len(full_graph["edges"]), 1)
+        self.assertEqual(full_graph["edges"][0]["relation"], "flows_to")
+
+    def test_viewer_limit_allows_catalog_focus_fetches(self):
+        self.assertEqual(cybermem.parse_viewer_limit("250", 80), 250)
+        self.assertEqual(cybermem.parse_viewer_limit("900", 80), 500)
+        self.assertEqual(cybermem.parse_viewer_limit("not-a-number", 80), 80)
+
     def test_rejects_absolute_artifact_paths(self):
         with self.assertRaises(ValueError):
             cybermem.save_node(

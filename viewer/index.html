@@ -13,21 +13,15 @@
           <div class="eyebrow">Cybermem</div>
           <h1>Memory</h1>
         </div>
-        <div class="live" id="liveStatus">
-          <span class="live-dot"></span>
-          <span id="liveText">starting</span>
+        <div class="mode-toggle" role="tablist" aria-label="View mode">
+          <button id="catalogMode" class="mode-button is-active" type="button">Catalog</button>
+          <button id="graphMode" class="mode-button" type="button">Graph</button>
         </div>
       </header>
 
       <section class="workspace-band" aria-label="Workspace">
         <label for="workspaceSelect">Workspace</label>
-        <div class="workspace-controls">
-          <select id="workspaceSelect"></select>
-          <div class="workspace-open">
-            <input id="workspaceInput" type="text" placeholder="Workspace path" autocomplete="off">
-            <button id="workspaceOpen" type="button">Open</button>
-          </div>
-        </div>
+        <select id="workspaceSelect"></select>
       </section>
 
       <section class="stats-grid" id="statsGrid" aria-label="Memory stats"></section>
@@ -38,6 +32,12 @@
       </section>
 
       <section class="feed" id="feed" aria-live="polite"></section>
+
+      <section class="graph-panel" id="graphPanel" hidden>
+        <div class="graph-summary" id="graphSummary"></div>
+        <div class="graph-canvas" id="graphCanvas"></div>
+        <aside class="graph-detail" id="graphDetail" hidden></aside>
+      </section>
     </main>
 
     <div class="evidence-modal" id="evidenceModal" hidden>
@@ -53,6 +53,7 @@
       </section>
     </div>
 
+    <script src="/vendor/cytoscape/cytoscape.min.js"></script>
     <script src="/app.js"></script>
   </body>
 </html>

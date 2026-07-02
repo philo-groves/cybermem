@@ -136,6 +136,7 @@ def save_viewer_state(state: dict[str, Any]) -> None:
 
 
 def remember_workspace(workspace: Path) -> None:
+    workspace = workspace.expanduser().resolve()
     with VIEWER_STATE_LOCK:
         state = load_viewer_state()
         workspaces = state.get("workspaces", [])
@@ -939,6 +940,16 @@ def parse_types_param(raw: str | None) -> list[str]:
     return [item.strip() for item in raw.split(",") if item.strip()]
 
 
+def parse_viewer_limit(value: Any, default: int = 250) -> int:
+    if value is None:
+        return default
+    try:
+        parsed = int(value)
+    except (TypeError, ValueError):
+        return default
+    return max(1, min(parsed, 500))
+
+
 def viewer_snapshot(
     workspace: Path,
     *,
@@ -994,6 +1005,85 @@ def viewer_snapshot(
     return payload
 
 
+def viewer_graph(
+    workspace: Path,
+    *,
+    query: str = "",
+    types: list[str] | None = None,
+    limit: int = 250,
+) -> dict[str, Any]:
+    db_path = resolve_db_path(workspace)
+    payload: dict[str, Any] = {
+        "workspace": str(workspace),
+        "database": str(db_path),
+        "dbExists": db_path.exists(),
+        "generatedAt": utc_now(),
+        "nodes": [],
+        "edges": [],
+    }
+    conn = connect_readonly_if_exists(workspace)
+    if conn is None:
+        return payload
+
+    types = types or []
+    where: list[str] = []
+    params: list[Any] = []
+    if query:
+        like = f"%{query.lower()}%"
+        where.append(
+            "(lower(title) LIKE ? OR lower(summary) LIKE ? OR lower(body) LIKE ?)"
+        )
+        params.extend([like, like, like])
+    if types:
+        for node_type in types:
+            if node_type not in NODE_TYPES:
+                raise ValueError(f"Unknown node type: {node_type}")
+        where.append(f"type IN ({','.join('?' for _ in types)})")
+        params.extend(types)
+
+    sql = "SELECT * FROM nodes"
+    if where:
+        sql += " WHERE " + " AND ".join(where)
+    sql += " ORDER BY updated_at DESC, title LIMIT ?"
+    params.append(parse_viewer_limit(limit))
+
+    try:
+        rows = conn.execute(sql, params).fetchall()
+        nodes = [
+            node_to_dict(conn, row, include_evidence=False, include_edges=False)
+            for row in rows
+        ]
+        node_ids = {node["id"] for node in nodes}
+        edges = []
+        if node_ids:
+            placeholders = ",".join("?" for _ in node_ids)
+            edge_rows = conn.execute(
+                f"""
+                SELECT from_id, to_id, relation, note, created_at, updated_at
+                FROM edges
+                WHERE from_id IN ({placeholders}) AND to_id IN ({placeholders})
+                ORDER BY relation, from_id, to_id
+                """,
+                [*node_ids, *node_ids],
+            ).fetchall()
+            edges = [
+                {
+                    "fromId": row["from_id"],
+                    "toId": row["to_id"],
+                    "relation": row["relation"],
+                    "note": row["note"],
+                    "createdAt": row["created_at"],
+                    "updatedAt": row["updated_at"],
+                }
+                for row in edge_rows
+            ]
+        payload["nodes"] = nodes
+        payload["edges"] = edges
+    finally:
+        conn.close()
+    return payload
+
+
 class CybermemViewerHandler(BaseHTTPRequestHandler):
     server_version = "CybermemViewer/0.1"
 
@@ -1033,6 +1123,12 @@ class CybermemViewerHandler(BaseHTTPRequestHandler):
         if parsed.path == "/app.js":
             self.send_static("app.js", "text/javascript; charset=utf-8")
             return
+        if parsed.path == "/vendor/cytoscape/cytoscape.min.js":
+            self.send_static(
+                "vendor/cytoscape/cytoscape.min.js",
+                "text/javascript; charset=utf-8",
+            )
+            return
         if parsed.path == "/api/state":
             self.send_json(viewer_state_payload())
             return
@@ -1046,13 +1142,28 @@ class CybermemViewerHandler(BaseHTTPRequestHandler):
             )
             query = params.get("query", [""])[0]
             types = parse_types_param(params.get("types", [""])[0])
-            try:
-                limit = parse_limit(int(params.get("limit", ["80"])[0]), 80)
-            except (TypeError, ValueError):
-                limit = 80
+            limit = parse_viewer_limit(params.get("limit", ["80"])[0], 80)
             try:
                 self.send_json(
                     viewer_snapshot(workspace, query=query, types=types, limit=limit)
+                )
+            except Exception as exc:
+                self.send_json({"error": str(exc)}, status=500)
+            return
+        if parsed.path == "/api/graph":
+            params = parse_qs(parsed.query)
+            raw_workspace = params.get("workspace", [None])[0]
+            workspace = (
+                Path(raw_workspace).expanduser().resolve()
+                if raw_workspace
+                else viewer_default_workspace()
+            )
+            query = params.get("query", [""])[0]
+            types = parse_types_param(params.get("types", [""])[0])
+            limit = parse_viewer_limit(params.get("limit", ["250"])[0], 250)
+            try:
+                self.send_json(
+                    viewer_graph(workspace, query=query, types=types, limit=limit)
                 )
             except Exception as exc:
                 self.send_json({"error": str(exc)}, status=500)
