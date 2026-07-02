@@ -1,0 +1,11 @@
+{
+  "mcpServers": {
+    "cybermem": {
+      "command": "python3",
+      "args": [
+        "./mcp/cybermem_server.py"
+      ],
+      "cwd": "."
+    }
+  }
+}
