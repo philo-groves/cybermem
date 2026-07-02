@@ -25,6 +25,7 @@ SCHEMA_VERSION = 1
 
 NODE_TYPES = {
     "asset",
+    "bug",
     "invariant",
     "mitigation",
     "source",

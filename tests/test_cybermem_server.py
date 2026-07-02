@@ -110,6 +110,42 @@ class CybermemServerTests(unittest.TestCase):
         self.assertTrue(second["typeData"]["enforced"])
         self.assertEqual(second["revision"], 2)
 
+    def test_bug_history_node_type(self):
+        bug = cybermem.save_node(
+            self.conn,
+            {
+                "type": "bug",
+                "title": "CVE-2026-0001 auth bypass",
+                "summary": "Historical auth bypass fixed after patch diff review.",
+                "status": "confirmed",
+                "confidence": 0.9,
+                "tags": ["cve", "patch-diff", "auth"],
+                "typeData": {
+                    "cve": "CVE-2026-0001",
+                    "source": "patch-diff",
+                    "fixedIn": "1.2.3",
+                    "recurrenceRisk": "Check sibling auth middleware for the same missing role guard.",
+                },
+                "evidence": [
+                    {
+                        "kind": "code",
+                        "pathBase": "workspace",
+                        "path": "src/auth/middleware.py",
+                        "locator": {"symbol": "require_role"},
+                        "summary": "Patch added the missing role guard.",
+                    }
+                ],
+            },
+        )
+        results = cybermem.search_nodes(
+            self.conn,
+            {"query": "auth bypass", "types": ["bug"], "includeEvidence": True},
+        )
+
+        self.assertEqual(bug["type"], "bug")
+        self.assertEqual(results["count"], 1)
+        self.assertEqual(results["nodes"][0]["typeData"]["cve"], "CVE-2026-0001")
+
     def test_rejects_absolute_artifact_paths(self):
         with self.assertRaises(ValueError):
             cybermem.save_node(

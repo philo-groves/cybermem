@@ -16,6 +16,7 @@ Cybermem is intentionally light. It gives a capable model or human researcher du
 ## Memory Types
 
 - **Asset**: An application, system, program, equipment, or personnel.
+- **Bug History**: A historical bug, CVE, patch-diff finding, security-relevant code comment, or prior defect note.
 - **Invariant**: A security fact which is meant to always be true.
 - **Mitigation**: A known exploit prevention measure to be aware of.
 - **Source**: An attacker-controlled entrypoint into a system.
@@ -144,7 +145,7 @@ The runtime database, WAL files, and exported preseeds are intentionally ignored
 4. **Proofing**: Primitives and chains must be proofed before they are fully confirmed. Primitives may be proofed with static analysis, while chains require end-to-end proof-of-vulnerability (PoV) runnables. Each PoV must pass an isolated subagent skeptic gate.
 5. **Reporting**: Proofed chains are converted into submission-ready reports which include steps to reproduce, impact analysis, and details of the vulnerability.
 
-Assets provide scoped areas of research. Invariants and mitigations provide unique security considerations. Sources and sinks provide security-relevant code locations. Primitives and chains provide tracking of security flaws. Trajectories provide reusable steps to improve over time.
+Assets provide scoped areas of research. Bug history captures prior defects and recurrence signals. Invariants and mitigations provide unique security considerations. Sources and sinks provide security-relevant code locations. Primitives and chains provide tracking of security flaws. Trajectories provide reusable steps to improve over time.
 
 ## Preseeding
 

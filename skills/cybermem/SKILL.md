@@ -1,6 +1,6 @@
 ---
 name: cybermem
-description: Use Cybermem to persist and retrieve reusable cyber research system knowledge as a lightweight SQLite-backed graph. Use when researching assets, threat models, vulnerability hypotheses, sources, sinks, mitigations, primitives, chains, or reusable trajectories.
+description: Use Cybermem to persist and retrieve reusable cyber research system knowledge as a lightweight SQLite-backed graph. Use when researching assets, threat models, bug history, vulnerability hypotheses, sources, sinks, mitigations, primitives, chains, or reusable trajectories.
 ---
 
 # Cybermem
@@ -9,7 +9,7 @@ Cybermem is a local memory substrate for cyber research. It stores durable syste
 
 ## When To Use
 
-- Search Cybermem before researching an asset, subsystem, vulnerability class, source, sink, mitigation, primitive, chain, or reusable trajectory that may already have prior knowledge.
+- Search Cybermem before researching an asset, subsystem, vulnerability class, bug history, source, sink, mitigation, primitive, chain, or reusable trajectory that may already have prior knowledge.
 - Save new memory only when it is reusable beyond the current conversation or command run.
 - Prefer refining an existing node over creating a near-duplicate.
 - Link related nodes when the relationship will help future research.
@@ -22,6 +22,7 @@ Store claims, relationships, and evidence pointers. Keep artifacts on disk.
 Good Cybermem content:
 
 - Stable asset descriptions and boundaries.
+- Historical bugs, CVEs, patch-diff findings, and security-relevant comments.
 - Security invariants expected to hold.
 - Custom mitigations and defense assumptions.
 - Attacker-controlled sources and sensitive sinks.
@@ -41,6 +42,7 @@ Evidence references should use paths relative to the workspace, repo, or asset r
 ## Node Types
 
 - `asset`: An application, system, program, equipment, service, organization, or person in scope.
+- `bug`: A historical bug, CVE, patch-diff finding, security-relevant code comment, or prior defect note.
 - `invariant`: A security fact that is expected to remain true.
 - `mitigation`: A known exploit prevention or hardening measure.
 - `source`: An attacker-controlled entrypoint into a system.
