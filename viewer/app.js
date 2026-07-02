@@ -7,7 +7,11 @@ const els = {
   statsGrid: document.getElementById("statsGrid"),
   searchInput: document.getElementById("searchInput"),
   typeStrip: document.getElementById("typeStrip"),
-  feed: document.getElementById("feed")
+  feed: document.getElementById("feed"),
+  evidenceModal: document.getElementById("evidenceModal"),
+  evidenceTitle: document.getElementById("evidenceTitle"),
+  evidenceList: document.getElementById("evidenceList"),
+  evidenceClose: document.getElementById("evidenceClose")
 };
 
 const app = {
@@ -104,6 +108,17 @@ function chip(text, className = "meta-chip") {
   return node;
 }
 
+function evidenceButton(node) {
+  const count = (node.evidence || []).length;
+  if (!count) return chip("evidence 0");
+  const button = document.createElement("button");
+  button.type = "button";
+  button.className = "meta-chip evidence-open";
+  button.textContent = `evidence ${count}`;
+  button.addEventListener("click", () => openEvidence(node));
+  return button;
+}
+
 function renderEvidence(node, card) {
   const evidence = node.evidence || [];
   if (!evidence.length) return;
@@ -168,7 +183,7 @@ function renderNode(node, changed) {
   meta.append(
     chip(`updated ${formatTime(node.updatedAt)}`),
     chip(`rev ${node.revision || 1}`),
-    chip(`evidence ${(node.evidence || []).length}`),
+    evidenceButton(node),
     chip(`links ${(node.links || []).length}`)
   );
   card.append(meta);
@@ -182,6 +197,69 @@ function renderNode(node, changed) {
 
   renderEvidence(node, card);
   return card;
+}
+
+function detailRow(label, value) {
+  if (!value) return null;
+  const row = document.createElement("div");
+  row.className = "evidence-summary";
+  row.textContent = `${label}: ${value}`;
+  return row;
+}
+
+function locatorBlock(locator) {
+  if (!locator || !Object.keys(locator).length) return null;
+  const pre = document.createElement("pre");
+  pre.className = "evidence-locator";
+  pre.textContent = JSON.stringify(locator, null, 2);
+  return pre;
+}
+
+function openEvidence(node) {
+  els.evidenceTitle.textContent = node.title;
+  const evidence = node.evidence || [];
+  if (!evidence.length) {
+    const empty = document.createElement("div");
+    empty.className = "empty";
+    empty.textContent = "No evidence refs.";
+    els.evidenceList.replaceChildren(empty);
+  } else {
+    const rows = evidence.map((item) => {
+      const detail = document.createElement("article");
+      detail.className = "evidence-detail";
+
+      const head = document.createElement("div");
+      head.className = "evidence-detail-head";
+      const kind = document.createElement("span");
+      kind.className = "evidence-kind";
+      kind.textContent = item.kind || "evidence";
+      const created = document.createElement("span");
+      created.className = "evidence-created";
+      created.textContent = item.createdAt ? formatTime(item.createdAt) : "";
+      head.append(kind, created);
+      detail.append(head);
+
+      for (const row of [
+        detailRow("path", item.path),
+        detailRow("base", item.pathBase),
+        detailRow("summary", item.summary)
+      ]) {
+        if (row) detail.append(row);
+      }
+
+      const locator = locatorBlock(item.locator);
+      if (locator) detail.append(locator);
+      return detail;
+    });
+    els.evidenceList.replaceChildren(...rows);
+  }
+  els.evidenceModal.hidden = false;
+  document.body.classList.add("modal-open");
+}
+
+function closeEvidence() {
+  els.evidenceModal.hidden = true;
+  document.body.classList.remove("modal-open");
 }
 
 function renderFeed(snapshot) {
@@ -265,6 +343,14 @@ function bind() {
   els.workspaceOpen.addEventListener("click", openWorkspace);
   els.workspaceInput.addEventListener("keydown", (event) => {
     if (event.key === "Enter") openWorkspace();
+  });
+
+  els.evidenceClose.addEventListener("click", closeEvidence);
+  els.evidenceModal.addEventListener("click", (event) => {
+    if (event.target === els.evidenceModal) closeEvidence();
+  });
+  document.addEventListener("keydown", (event) => {
+    if (event.key === "Escape" && !els.evidenceModal.hidden) closeEvidence();
   });
 
   els.searchInput.addEventListener("input", () => {
