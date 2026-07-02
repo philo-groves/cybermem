@@ -21,3 +21,9 @@ An experimental memory system to create advanced software threat models and perf
 5. **Reporting**: Proofed chains are converted into suybmission-ready reports which include steps to reproduce, impact analysis, and details of the vulnerability.
 
 Assets provide scoped areas of research. Invariants and mitigations provide unique security considerations. Sources and sinks provide security-relevant code locations. Primitives and chains provide tracking of security flaws. Trajectories provide resusable steps to improve over time.
+
+## Preseeding
+
+Preseeding is taking the memory from one machine and using it as a base for another.
+
+This memory system separates transcripts from system knowledge. That means the persisted memory stores are exceptionally general: cyber research on the same asset(s) can seemlessly be shared in a plug-n-play style.
